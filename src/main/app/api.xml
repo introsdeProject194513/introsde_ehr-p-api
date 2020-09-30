@@ -1,0 +1,239 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:dw="http://www.mulesoft.org/schema/mule/ee/dw"
+	xmlns:metadata="http://www.mulesoft.org/schema/mule/metadata" xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:api-platform-gw="http://www.mulesoft.org/schema/mule/api-platform-gw"
+	xmlns:apikit="http://www.mulesoft.org/schema/mule/apikit" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:scripting="http://www.mulesoft.org/schema/mule/scripting"
+	xmlns:spring="http://www.springframework.org/schema/beans"
+	xmlns:tracking="http://www.mulesoft.org/schema/mule/ee/tracking"
+	xmlns:validation="http://www.mulesoft.org/schema/mule/validation"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/apikit http://www.mulesoft.org/schema/mule/apikit/current/mule-apikit.xsd
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans-3.1.xsd
+http://www.mulesoft.org/schema/mule/ee/tracking http://www.mulesoft.org/schema/mule/ee/tracking/current/mule-tracking-ee.xsd
+http://www.mulesoft.org/schema/mule/scripting http://www.mulesoft.org/schema/mule/scripting/current/mule-scripting.xsd
+http://www.mulesoft.org/schema/mule/api-platform-gw http://www.mulesoft.org/schema/mule/api-platform-gw/current/mule-api-platform-gw.xsd
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd
+http://www.mulesoft.org/schema/mule/ee/dw http://www.mulesoft.org/schema/mule/ee/dw/current/dw.xsd">
+	<!-- HTTP Listener Connector -->
+	<http:listener-config name="api-httpListenerConfig"
+		host="${api.http.listener.host}" port="${api.http.listener.port}"
+		doc:name="HTTP Listener Configuration" />
+	<!-- APIkit Router Configuration -->
+	<apikit:config name="api-config" raml="ehr-p-api.raml"
+		consoleEnabled="${api.console.enabled}" doc:name="Router" />
+	<validation:config name="Validation_Configuration"
+		doc:name="Validation Configuration" />
+	<flow name="api-main">
+		<http:listener config-ref="api-httpListenerConfig" path="${api.http.listener.path}"
+			doc:name="HTTP" />
+		<flow-ref name="global.get-tracking-id" doc:name="get-tracking-id" />
+		<logger
+			message="#[[sessionVars.trackingId]] - #[string:[#[context:serviceName]]] - { &quot;trackingId&quot;: &quot;#[sessionVars.trackingId]&quot;, &quot;request&quot;: &quot;#[message.inboundProperties['http.method']] #[message.inboundProperties['http.request.uri']]&quot; }"
+			level="INFO" doc:name="Audit request" category="AUDIT" />
+        <response>
+            <choice doc:name="Choice">
+                <when expression="#[flowVars.errorRaised != null &amp;&amp; flowVars.errorRaised == true]">
+                    <set-payload value="#[payload]" doc:name="Pass Through"/>
+                </when>
+                <otherwise>
+                    <logger message="#[[sessionVars.trackingId]] - #[string:[#[context:serviceName]]] - { &quot;trackingId&quot;: &quot;#[sessionVars.trackingId]&quot;, &quot;response&quot;: &quot;#[message.outboundProperties['http.status']]&quot; }" level="INFO" category="AUDIT" doc:name="Logger (AUDIT)"/>
+                </otherwise>
+            </choice>
+        </response>
+		<apikit:router config-ref="api-config" doc:name="APIkit Router" />
+		<exception-strategy ref="global-exception-strategy"
+			doc:name="Reference Exception Strategy" />
+	</flow>
+	<flow name="health-check">
+		<http:listener config-ref="api-httpListenerConfig" path="/health-check"
+			doc:name="HTTP" />
+		<set-property propertyName="http.status" value="200"
+			doc:name="Set 200 Status Code" />
+		<set-variable variableName="response.title" value="Heartbeat"
+			doc:name="Set Response Title" />
+		<set-payload value="OK" doc:name="Set Status Code"
+			mimeType="application/java" />
+		<flow-ref name="transform-to-jsonapi-data_flow" doc:name="transform-to-jsonapi-data_flow" />
+	</flow>
+	<flow name="post:/measurements:application/json:api-config">
+		<logger
+			message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - START post measure"
+			level="INFO" doc:name="Start" />
+		<logger
+			message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - END post measure"
+			level="INFO" doc:name="End" />
+	</flow>
+	<flow name="post:/prescriptions:application/json:api-config">
+		<logger
+			message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - START post prescription"
+			level="INFO" doc:name="Start" />
+        <dw:transform-message doc:name="Payload to Java object">
+            <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload]]></dw:set-payload>
+        </dw:transform-message>
+		<flow-ref name="api.retrieve-patient-id" doc:name="api.retrieve-patient-id" />
+		<validation:is-number config-ref="Validation_Configuration"
+			message="Patient not found" value="#[flowVars.patientId]" doc:name="Validate patientId is a number" numberType="INTEGER"/>
+		<enricher source="#[payload]" target="#[flowVars.drugId]"
+			doc:name="Retrive drug ID">
+			<processor-chain doc:name="Processor Chain">
+				<http:request config-ref="HTTP_NHS-S_Request_Configuration"
+					path="/drugs" method="GET" doc:name="GET drug unique code">
+					<http:request-builder>
+						<http:query-param paramName="filter[code]" value="#[payload.drugCode]" />
+						<http:header headerName="${correlation.id.name}"
+							value="#[sessionVars.trackingId]" />
+					</http:request-builder>
+				</http:request>
+				<dw:transform-message doc:name="Transform Message">
+					<dw:set-variable variableName="drug"><![CDATA[%dw 1.0
+%output application/java
+---
+payload[0] when payload != null and ((sizeOf payload) > 0) otherwise null]]></dw:set-variable>
+				</dw:transform-message>
+				<choice doc:name="Exist in nomenclature">
+					<when expression="#[flowVars.drug == empty]">
+						<logger
+							message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - Patient not found"
+							level="ERROR" doc:name="ERROR" />
+						<set-payload doc:name="Set Payload" value="#[null]" />
+					</when>
+					<otherwise>
+						<http:request config-ref="HTTP_EHR-S_Request_Configuration"
+							path="/drugs" method="GET" doc:name="GET drug EHR id">
+							<http:request-builder>
+								<http:query-param paramName="filter[brandName]"
+									value="#[flowVars.drug.brandName]" />
+								<http:query-param paramName="filter[substanceName]"
+									value="#[flowVars.drug.substanceName]" />
+								<http:header headerName="${correlation.id.name}"
+									value="#[sessionVars.trackingId]" />
+							</http:request-builder>
+						</http:request>
+						<dw:transform-message doc:name="Transform Message">
+							<dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+(payload filter ($.brandName == flowVars.drug.brandName and $.substanceName == flowVars.drug.substanceName))[0].id default null]]></dw:set-payload>
+						</dw:transform-message>
+                        <choice doc:name="Drug found?">
+                            <when expression="#[payload == empty]">
+                                <logger message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - Drug not found in EHR -&gt; create" level="WARN" doc:name="Not found"/>
+                                <dw:transform-message doc:name="Prepare body">
+                                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	brandName: flowVars.drug.brandName,
+	dosageForm: flowVars.drug.dosageForm,
+	genericName: flowVars.drug.genericName,
+	manufacterName: flowVars.drug.manufacterName,
+	productType: flowVars.drug.productType,
+	substanceName: flowVars.drug.substanceName
+}]]></dw:set-payload>
+                                </dw:transform-message>
+                                <http:request config-ref="HTTP_EHR-S_Request_Configuration" path="/drugs" method="POST" doc:name="POST drug">
+                                    <http:request-builder>
+                                        <http:header headerName="${correlation.id.name}" value="#[sessionVars.trackingId]"/>
+                                    </http:request-builder>
+                                </http:request>
+                                <dw:transform-message doc:name="Return id">
+                                    <dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+payload as :number default null]]></dw:set-payload>
+                                </dw:transform-message>
+                            </when>
+                            <otherwise>
+                                <logger message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - Drug found" level="TRACE" doc:name="Found"/>
+                            </otherwise>
+                        </choice>
+					</otherwise>
+				</choice>
+			</processor-chain>
+		</enricher>
+		<validation:is-number config-ref="Validation_Configuration"
+			message="Prescribed not found" value="#[flowVars.drugId]" doc:name="Validate drugId is a number" numberType="INTEGER"/>
+		<dw:transform-message doc:name="Set payload">
+			<dw:set-payload><![CDATA[%dw 1.0
+%output application/json
+---
+{
+	date: payload.date default now as :datetime as :string,
+	diagnosticoQuestion: payload.diagnosticoQuestion,
+	drugId: flowVars.drugId,
+	note: payload.note
+}]]></dw:set-payload>
+		</dw:transform-message>
+		<http:request config-ref="HTTP_EHR-S_Request_Configuration"
+			path="/patients/{patientId}/prescriptions" method="POST" doc:name="POST prescription">
+			<http:request-builder>
+				<http:uri-param paramName="patientId" value="#[flowVars.patientId]" />
+				<http:header headerName="${correlation.id.name}" value="#[sessionVars.trackingId]" />
+			</http:request-builder>
+		</http:request>
+		<logger
+			message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - END post prescription"
+			level="INFO" doc:name="End" />
+	</flow>
+	<flow name="get:/measurements:api-config">
+		<logger
+			message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - START retrieve measurements"
+			level="INFO" doc:name="Start" />
+		<logger
+			message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - END retrieve measurements"
+			level="INFO" doc:name="End" />
+	</flow>
+	<sub-flow name="api.retrieve-patient-id">
+		<enricher source="#[payload]" target="#[flowVars.patientId]"
+			doc:name="Retrieve patient id">
+			<processor-chain doc:name="Processor Chain">
+				<http:request config-ref="HTTP_NHS-S_Request_Configuration"
+					path="/patients" method="GET" doc:name="Find NHS code">
+					<http:request-builder>
+						<http:query-param paramName="filter[taxCode]"
+							value="#[payload.taxCode]" />
+						<http:header headerName="${correlation.id.name}"
+							value="#[sessionVars.trackingId]" />
+					</http:request-builder>
+				</http:request>
+				<dw:transform-message doc:name="Return code">
+					<dw:set-variable variableName="nhsCode"><![CDATA[%dw 1.0
+%output application/java
+---
+payload.nhrCode default null]]></dw:set-variable>
+				</dw:transform-message>
+				<choice doc:name="Choice">
+					<when expression="#[flowVars.nhsCode == empty]">
+						<logger
+							message="[#[sessionVars.trackingId]] - [#[string:#[context:serviceName]]] - Patient not found"
+							level="ERROR" doc:name="ERROR" />
+						<set-payload value="#[null]" doc:name="Set Payload" />
+					</when>
+					<otherwise>
+						<http:request config-ref="HTTP_EHR-S_Request_Configuration"
+							path="/patients" method="GET" doc:name="Retrieve patientId">
+							<http:request-builder>
+								<http:query-param paramName="filter[nhrCode]"
+									value="#[flowVars.nhsCode]" />
+								<http:header headerName="${correlation.id.name}"
+									value="#[sessionVars.trackingId]" />
+							</http:request-builder>
+						</http:request>
+						<dw:transform-message doc:name="Return patientId">
+							<dw:set-payload><![CDATA[%dw 1.0
+%output application/java
+---
+((payload filter $.nhrCode == flowVars.nhsCode)[0]).id default null]]></dw:set-payload>
+						</dw:transform-message>
+					</otherwise>
+				</choice>
+			</processor-chain>
+		</enricher>
+	</sub-flow>
+</mule>

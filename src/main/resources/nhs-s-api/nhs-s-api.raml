@@ -1,0 +1,56 @@
+#%RAML 1.0
+version: v1
+title: NHS S-API
+mediaType: application/json
+protocols: [ HTTP, HTTPS ]
+baseUri: http://localhost:9003/api/nhs-s-api/{version}/
+uses:
+  dt: libraries/data_types_library.raml
+  tr: libraries/traits_library.raml
+
+/patients:
+  is: [tr.common_error_traits]
+  displayName: Patient
+  description: |
+    NHS store personal information about patients
+  get:
+    description: |
+      Retrieve patient's personal data from NHS records
+    queryParameters:
+      filter[taxCode]:
+        type: string
+        required: true
+        example: 'RSSMRA70A01L378C'
+        description: |
+          Tax code
+    responses:
+      200:
+        description: ok
+        body:
+          application/json:
+            type: dt.get_patient
+            example: !include example/get_patient.json
+
+/drugs:
+  is: [tr.common_error_traits]
+  displayName: Nomenclature
+  description: |
+    Pharmaceutical prontuary of the NHS
+  get:
+    description: |
+      Retrieve data about specific drugs
+    queryParameters:
+      filter[code]:
+        type: string
+        required: true
+        example: "124.56"
+        description: |
+          Drug code in the nomenclature
+    responses:
+      200:
+        description: ok
+        body:
+          application/json:
+            type: array
+            items: dt.get_drug
+            example: !include example/get_drugs.json

@@ -1,0 +1,55 @@
+#%RAML 1.0 DataType
+
+displayName: Drug
+description: Drug record store in the pharmaceutical prontuary of the NHS
+
+type: object
+properties:
+  code:
+    type: string
+    required: true
+    example: 124ds-12
+    description: |
+      Unique identifier for the patient in the NHR registry
+  description:
+    type: string
+    required: true
+    example: Medication used to prevent headache
+    description: |
+      Description
+  genericName:
+    type: string
+    required: true
+    example: ISOTRETINOIN
+    description: |
+      Durg's generica name
+  brandName:
+    type: string
+    required: true
+    example: Rossi
+    description: |
+      Brand name
+  substanceName:
+    type: string
+    required: true
+    example: ISOTRETINOIN
+    description: |
+      Substance name
+  manufacterName:
+    type: string
+    required: true
+    example: 2020-01-01
+    description: |
+      Dr. Rossi Pharmaceutical snc
+  dosageForm:
+    type: string
+    required: true
+    example: CAPSULE 10mg
+    description: |
+      Dosage form
+  productType:
+    type: string
+    required: false
+    example: HUMAN PRESCRIPTION DRUG
+    description: |
+      Product type
